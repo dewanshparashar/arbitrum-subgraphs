@@ -314,6 +314,34 @@ describe("Message events", () => {
       messageSentHandler("L2", ChainDomain.Arbitrum, ChainDomain.Mainnet);
     });
 
+    test(`MessageSent decoded from a real mainnet message (L1)`, () => {
+      // message emitted in Ethereum tx 0x77894001ee62c0b245e6e9c3b35fcdc79e917ce352b20a0b2ec49e8d916734c2
+      const event = createMessageSentEvent(
+        Bytes.fromHexString(
+          "0x0000000000000000000000030000000000075aff000000000000000000000000bd3fa81b58ba92a82136038b25adec7066af315500000000000000000000000019330d10d9cc8751218eaf51e8885d058642e08a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480000000000000000000000002a306013ecef96c2fd06995f7f140a17a095da71000000000000000000000000000000000000000000000000000000174876e8000000000000000000000000002a306013ecef96c2fd06995f7f140a17a095da71"
+        )
+      );
+      handleMessageSentL1(event);
+      const id =
+        "0x00000000000000000000000000000000000000000000000000000000000000075aff";
+      assert.entityCount("MessageSent", 1);
+      assert.fieldEquals("MessageSent", id, "sourceDomain", "0");
+      assert.fieldEquals("MessageSent", id, "nonce", "482047"); // 0x75aff
+      assert.fieldEquals("MessageSent", id, "amount", "100000000000");
+      assert.fieldEquals(
+        "MessageSent",
+        id,
+        "sender",
+        "0x2a306013ecef96c2fd06995f7f140a17a095da71"
+      );
+      assert.fieldEquals(
+        "MessageSent",
+        id,
+        "recipient",
+        "0x2a306013ecef96c2fd06995f7f140a17a095da71"
+      );
+    });
+
     test(`Older MessageSent event with same (nonce, sourceDomain) is skipped (L1)`, () => {
       olderMessageSentIsSkipped(
         "L1",

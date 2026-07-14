@@ -25,6 +25,11 @@ function leftPadBytes(data: Bytes, length: number): Bytes {
   return completeData;
 }
 
+function bigIntFromBigEndianBytes(data: Uint8Array): BigInt {
+  // BigInt.fromUnsignedBytes expects little-endian bytes
+  return BigInt.fromUnsignedBytes(Bytes.fromUint8Array(data.slice(0).reverse()));
+}
+
 function getIdFromMessage(sourceDomain: BigInt, noncePadded: Bytes): Bytes {
   return Bytes.fromHexString(
     `0${sourceDomain.toString()}${noncePadded.toHexString()}`
@@ -121,47 +126,28 @@ function handleMessageSent(
   event: MessageSentEvent,
   expectedDestinationDomain: ChainDomain
 ): void {
-  // message is encoded with encodePacked, we need to pad non-bytes parameter (uint32, uint64) to 32 bytes (= 256 bits)
-  const message = event.params.message;
-  const versionSlice = message.slice(0, 4);
-  const sourceDomainSlice = message.slice(4, 8);
-  const destinationDomainSlice = message.slice(8, 12);
-  const nonceSlice = message.subarray(12, 20);
-
-  const versionPadded = leftPadBytes(Bytes.fromUint8Array(versionSlice), 32);
-  const sourceDomainPadded = leftPadBytes(
-    Bytes.fromUint8Array(sourceDomainSlice),
-    32
-  );
-  const destinationDomainPadded = leftPadBytes(
-    Bytes.fromUint8Array(destinationDomainSlice),
-    32
-  );
-
-  const noncePadded = leftPadBytes(Bytes.fromUint8Array(nonceSlice), 32);
-  const messagePadded = versionPadded
-    .concat(sourceDomainPadded)
-    .concat(destinationDomainPadded)
-    .concat(noncePadded)
-    .concat(Bytes.fromUint8Array(message.slice(24)));
-
+  // message is encoded with encodePacked, fields sit at fixed byte offsets:
+  // version [0:4], sourceDomain [4:8], destinationDomain [8:12], nonce [12:20],
+  // sender [20:52], recipient [52:84], destinationCaller [84:116], messageBody [116:]
   // see https://developers.circle.com/stablecoin/docs/cctp-technical-reference#message
-  const decodedMessageData = ethereum.decode(
-    // (version, sourceDomain, destinationDomain, nonce, sender, recipient, destinationcaller, messageBody)
-    "(uint32,uint32,uint32,uint64,bytes32,bytes32,bytes32,bytes128)",
-    messagePadded
-  );
-
-  if (!decodedMessageData) {
-    log.error("decodedMessageData doesn't exist", []);
+  // Read with byte slices, not ethereum.decode: https://github.com/graphprotocol/graph-node/issues/6683
+  const message = event.params.message;
+  if (message.length < 248) {
+    log.error("[handleMessageSent]: message is too short ({} bytes)", [
+      message.length.toString(),
+    ]);
     return;
   }
 
-  const decodedMessageDataTuple = decodedMessageData.toTuple();
-  const destinationDomain = decodedMessageDataTuple[2].toBigInt();
-  const sourceDomain = decodedMessageDataTuple[1].toBigInt();
-  const nonce = decodedMessageDataTuple[3].toBigInt();
-  const messageBody = decodedMessageDataTuple[7].toBytes();
+  const sourceDomain = bigIntFromBigEndianBytes(message.slice(4, 8));
+  const destinationDomain = bigIntFromBigEndianBytes(message.slice(8, 12));
+  const nonce = bigIntFromBigEndianBytes(message.slice(12, 20));
+  const noncePadded = leftPadBytes(
+    Bytes.fromUint8Array(message.slice(12, 20)),
+    32
+  );
+  // skip the 4-byte messageBody version, keep the 4 32-byte words
+  const messageBody = Bytes.fromUint8Array(message.slice(120, 248));
 
   if (destinationDomain.notEqual(BigInt.fromI32(expectedDestinationDomain))) {
     log.warning(
